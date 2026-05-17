@@ -8,7 +8,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <style>
 /* ══════════════════════════════════════
    수채화 여름 팔레트
@@ -582,8 +581,7 @@ body::after {
   <div class="home-header">
     <div class="home-logo">🌊 스터디<span>버드</span></div>
     <div class="hdr-actions">
-      <button class="icon-btn" id="btn-login">🔐 로그인</button>
-      <button class="icon-btn" id="btn-sync">☁️ 동기화</button>
+<button class="icon-btn" id="btn-sync">☁️ 동기화</button>
       <button class="icon-btn" id="btn-apikey">🔑 API 키</button>
       <button class="icon-btn" id="btn-memo">✦ 메모</button>
       <button class="icon-btn" id="btn-school">🏫 학교생활</button>
@@ -865,32 +863,6 @@ body::after {
 
 
 
-<!-- LOGIN MODAL -->
-<div class="overlay" id="ovLogin">
-  <div class="modal" style="text-align:center;">
-    <div style="font-size:2.5rem;margin-bottom:.75rem;">🌊</div>
-    <h3 style="font-size:1.1rem;margin-bottom:.5rem;">스터디버드에 로그인</h3>
-    <div style="font-size:.8rem;color:var(--ink2);margin-bottom:1.5rem;line-height:1.6;">
-      Google 계정으로 로그인하면<br>모든 기기에서 데이터가 연동돼요
-    </div>
-    <button id="btn-googleLogin" style="
-      display:flex;align-items:center;justify-content:center;gap:.6rem;
-      width:100%;padding:.75rem;border-radius:12px;
-      background:white;border:1px solid rgba(0,0,0,0.15);
-      font-size:.9rem;font-family:'Noto Sans KR',sans-serif;
-      cursor:pointer;font-weight:500;color:#3c4043;
-      box-shadow:0 2px 8px rgba(0,0,0,0.1);transition:all .2s;
-    ">
-      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20">
-      Google로 로그인
-    </button>
-    <div class="m-foot" style="justify-content:center;margin-top:1rem;">
-      <button class="m-btn" id="btn-closeLogin">닫기</button>
-      <button class="m-btn" id="btn-logout" style="color:#d04040;">로그아웃</button>
-    </div>
-  </div>
-</div>
-
 <!-- API KEY MODAL -->
 <div class="overlay" id="ovApiKey">
   <div class="modal">
@@ -937,67 +909,15 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const auth = firebase.auth();
-const googleProvider = new firebase.auth.GoogleAuthProvider();
 
-let UID = null;
-
-// ── Google 로그인 ──
-async function signInWithGoogle() {
-  try {
-    const result = await auth.signInWithPopup(googleProvider);
-    UID = result.user.uid;
-    localStorage.setItem('sb4_uid', UID);
-    localStorage.setItem('sb4_userEmail', result.user.email);
-    localStorage.setItem('sb4_userName', result.user.displayName);
-    closeOv('ovLogin');
-    toast('👋 ' + result.user.displayName + '님 환영해요!');
-    await syncFromCloud();
-    updateLoginUI();
-  } catch(e) {
-    toast('로그인 실패: ' + e.message);
-  }
+// 기기 고유 ID (익명)
+let UID = localStorage.getItem('sb4_uid');
+if(!UID) {
+  UID = 'user_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  localStorage.setItem('sb4_uid', UID);
 }
 
-function signOut() {
-  auth.signOut().then(() => {
-    UID = null;
-    localStorage.removeItem('sb4_uid');
-    localStorage.removeItem('sb4_userEmail');
-    localStorage.removeItem('sb4_userName');
-    updateLoginUI();
-    toast('로그아웃됐어요');
-  });
-}
-
-function updateLoginUI() {
-  const email = localStorage.getItem('sb4_userEmail');
-  const name = localStorage.getItem('sb4_userName');
-  const btn = document.getElementById('btn-login');
-  if(!btn) return;
-  if(email) {
-    btn.textContent = '👤 ' + (name ? name.split(' ')[0] : email.split('@')[0]);
-  } else {
-    btn.textContent = '🔐 로그인';
-  }
-}
-
-// 앱 시작 시 자동 로그인 복원
-auth.onAuthStateChanged(user => {
-  if(user) {
-    UID = user.uid;
-    localStorage.setItem('sb4_uid', user.uid);
-    localStorage.setItem('sb4_userEmail', user.email || '');
-    localStorage.setItem('sb4_userName', user.displayName || '');
-    updateLoginUI();
-    syncFromCloud();
-  } else {
-    UID = null;
-    updateLoginUI();
-  }
-});
-
-// ── 하이브리드 Storage (로컬 즉시 + 클라우드 동기화) ──
+// ── 하이브리드 Storage (로컬 즉시 + 클라우드 백그라운드) ──
 const S = {
   g: k => {
     try { const v = localStorage.getItem('sb4_'+k); return v ? JSON.parse(v) : null; } catch { return null; }
@@ -1005,8 +925,9 @@ const S = {
   s: (k, v) => {
     try {
       localStorage.setItem('sb4_'+k, JSON.stringify(v));
-      if(!k.startsWith('f_') && UID) {
-        db.collection('users').doc(UID).collection('data').doc(k)
+      // 파일(base64) 제외하고 클라우드 저장
+      if(!k.startsWith('f_')) {
+        db.collection('devices').doc(UID).collection('data').doc(k)
           .set({ v: JSON.stringify(v), t: Date.now() })
           .catch(() => {});
       }
@@ -1016,13 +937,11 @@ const S = {
 
 // 클라우드 → 로컬 동기화
 async function syncFromCloud() {
-  if(!UID) { toast('☁️ 로그인 후 동기화할 수 있어요'); return; }
   try {
-    const snap = await db.collection('users').doc(UID).collection('data').get();
+    const snap = await db.collection('devices').doc(UID).collection('data').get();
     snap.forEach(doc => {
-      const k = doc.id;
-      if(!k.startsWith('f_')) {
-        localStorage.setItem('sb4_'+k, doc.data().v);
+      if(!doc.id.startsWith('f_')) {
+        localStorage.setItem('sb4_'+doc.id, doc.data().v);
       }
     });
     renderAllSubjs();
@@ -1031,9 +950,9 @@ async function syncFromCloud() {
     renderActivities();
     renderExps();
     renderSplashMemos();
-    const en = S.g('etcNotes'); if(en) { const el=document.getElementById('etcNotes'); if(el) el.value=en; }
-    const ce = S.g('clubEtcNotes'); if(ce) { const el=document.getElementById('clubEtcNotes'); if(el) el.value=ce; }
-    const cl = S.g('clubLog'); if(cl) { const el=document.getElementById('clubLog'); if(el) el.value=cl; }
+    const en = S.g('etcNotes'); if(en){ const el=document.getElementById('etcNotes'); if(el) el.value=en; }
+    const ce = S.g('clubEtcNotes'); if(ce){ const el=document.getElementById('clubEtcNotes'); if(el) el.value=ce; }
+    const cl = S.g('clubLog'); if(cl){ const el=document.getElementById('clubLog'); if(el) el.value=cl; }
     toast('☁️ 동기화 완료!');
   } catch(e) { toast('동기화 오류: ' + e.message); }
 }
@@ -1550,10 +1469,6 @@ function init(){
   document.getElementById('btn-saveEtc').onclick=()=>{S.s('etcNotes',document.getElementById('etcNotes').value);toast('저장됨 💾');};
 
   // api key
-  document.getElementById('btn-login').onclick=()=>{updateLoginUI();openOv('ovLogin');};
-  document.getElementById('btn-googleLogin').onclick=signInWithGoogle;
-  document.getElementById('btn-closeLogin').onclick=()=>closeOv('ovLogin');
-  document.getElementById('btn-logout').onclick=()=>{signOut();closeOv('ovLogin');};
   document.getElementById('btn-sync').onclick=()=>{toast('동기화 중...');syncFromCloud();};
   document.getElementById('btn-apikey').onclick=()=>{ document.getElementById('apiKeyInput').value=S.g('aiKey')||''; openOv('ovApiKey'); };
   document.getElementById('btn-testApiKey').onclick = async () => {
