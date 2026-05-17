@@ -907,17 +907,23 @@ const firebaseConfig = {
   messagingSenderId: "359356709161",
   appId: "1:359356709161:web:65d765b22201dd818b1f38"
 };
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
 
-// 기기 고유 ID (익명)
+let db = null;
+try {
+  if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+} catch(e) {
+  console.warn('Firebase 초기화 실패 (오프라인 모드로 실행):', e.message);
+}
+
+// 기기 고유 ID
 let UID = localStorage.getItem('sb4_uid');
 if(!UID) {
   UID = 'user_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
   localStorage.setItem('sb4_uid', UID);
 }
 
-// ── 하이브리드 Storage (로컬 즉시 + 클라우드 백그라운드) ──
+// ── Storage (로컬 우선, 클라우드 백그라운드) ──
 const S = {
   g: k => {
     try { const v = localStorage.getItem('sb4_'+k); return v ? JSON.parse(v) : null; } catch { return null; }
@@ -925,8 +931,7 @@ const S = {
   s: (k, v) => {
     try {
       localStorage.setItem('sb4_'+k, JSON.stringify(v));
-      // 파일(base64) 제외하고 클라우드 저장
-      if(!k.startsWith('f_')) {
+      if(db && !k.startsWith('f_')) {
         db.collection('devices').doc(UID).collection('data').doc(k)
           .set({ v: JSON.stringify(v), t: Date.now() })
           .catch(() => {});
@@ -937,6 +942,7 @@ const S = {
 
 // 클라우드 → 로컬 동기화
 async function syncFromCloud() {
+  if(!db) { toast('오프라인 모드: 동기화 불가'); return; }
   try {
     const snap = await db.collection('devices').doc(UID).collection('data').get();
     snap.forEach(doc => {
